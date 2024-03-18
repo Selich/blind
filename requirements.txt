@@ -1,0 +1,35 @@
+appdirs==1.4.4
+attrs==20.3.0
+black==19.10b0; platform_machine == "x86_64"  # Black may have issues on ARM; check for updates or alternatives if errors arise
+certifi==2020.12.5
+cffi==1.14.5
+click==7.1.2
+cycler==0.10.0
+djitellopy2==2.3; python_version >= "3.6"  # Ensure ARM compatibility or consider alternatives
+fastseg==0.1.2; python_version >= "3.6"  # Might need to be installed from source for ARM compatibility
+geffnet==1.0.0; python_version >= "3.6"  # Check for ARM compatibility
+kiwisolver==1.3.1
+matplotlib==3.4.2
+mypy-extensions==0.4.3
+numpy; platform_machine == "aarch64"  # ARM-compatible version should be automatically selected
+olefile==0.46
+opencv-python==4.5.1.48; platform_machine == "aarch64"  # Ensure ARM compatibility, might need to install from source
+pathspec==0.7.0
+Pillow; platform_machine == "aarch64"  # ARM-compatible version should be automatically selected
+pip==21.0.1
+pycparser==2.20
+pyparsing==2.4.7
+python-dateutil==2.8.1
+PyYAML
+regex==2021.4.4
+setuptools
+six==1.15.0
+toml==0.10.2
+torch; platform_machine == "aarch64"  # Use the command from PyTorch's official site for ARM compatibility
+torchvision; platform_machine == "aarch64"  # Use the command from PyTorch's official site for ARM compatibility
+typed-ast==1.4.2
+typing-extensions==3.7.4.3
+wheel
+yacs==0.1.8
+timm==0.3.2; python_version >= "3.6"  # Check for ARM compatibility
+ipython==7.25.0
