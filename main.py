@@ -1,177 +1,167 @@
 import argparse
-
 import cv2
+import time
+
 import numpy as np
 from PIL import Image
-
 import torch
 
-import pyttsx3
 
 from models import segmentation, traffic_light_classification
 from config import cfg, update_config
-from drone import drone
 from utils import colorize
 from utils.utils import (
     create_logger,
     extract_walkable_area,
     display,
-    display_info,
     extract_traffic_light,
-    crop_traffic_lights,
-    sound_alarm,
-    export_data,
 )
+def reduce_green_channel(image, reduction_factor=0.7):
+    image[:, :, 1] = image[:, :, 1] * reduction_factor
+    return image
+
+def apply_sharp_edges_filter(image):
+    sharpening_kernel = np.array([[0, -1, 0],
+                                  [-1,  5, -1],
+                                  [0, -1, 0]])
+    sharpened_image = cv2.filter2D(image, -1, sharpening_kernel)
+    return sharpened_image
+
+def process_image(_frame, device, seg_model):
+
+    _frame = cv2.cvtColor(_frame, cv2.COLOR_BGR2RGB)
+    _frame = cv2.resize(_frame, tuple(cfg.IMAGE.SIZE))
+    img_display = _frame
+
+    img = Image.fromarray(_frame).convert('RGB')
+    seg_prediction = segmentation.predict_one(seg_model, img, device, cfg)
+
+    model_name = "swaftnet"
+    convert = "segformer" not in model_name
+
+    colorized = colorize.colorize(seg_prediction, palette=cfg.SEGMENTATION.PALETTE, convert=convert)
+    colorized_seg_pred = np.asarray(colorized.copy())
+
+    walkable_area_mask = extract_walkable_area(colorized_seg_pred, cfg)
+    walkable_area_mask_resized = cv2.resize(walkable_area_mask.astype(np.uint8), (_frame.shape[1], _frame.shape[0]))
+    # divide the resulting matrix in 4 equal quadrants and multiply by 1.5
+    # print(walkable_area_mask_resized)
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Walkable path discovery")
-    parser.add_argument("--cfg", help="Experiment config file", required=True, type=str)
-    parser.add_argument("--ready", help="Ready for flight", action="store_true")
-    parser.add_argument(
-        "opts", help="Modify config options using command line", default=None, nargs=argparse.REMAINDER,
-    )
+    # Convert the binary mask to a 3-channel image to use for blending
+    walkable_area_mask_3ch = cv2.cvtColor(walkable_area_mask_resized, cv2.COLOR_GRAY2BGR)
 
-    args = parser.parse_args()
-    return args
+    # Blend the mask with the original frame
+    # Note: Adjust blending factor as needed
+    # blended_frame = cv2.addWeighted(_frame, 0.7, walkable_area_mask_3ch * 255, 0.3, 0)
+
+    # return blended_frame
+
+    blended = colorize.blend(img, colorized, cfg.SEGMENTATION.ALPHA)
+    img_display = display(_frame, colorized, blended, cfg.DRONE.DISPLAY_IMAGE)
+    img_display = np.asarray(img_display)
+    img_display = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+
+    return img_display
+
+def test_on_image(device,seg_model):
+    image_paths = ["2.jpeg"]
+    for image_path in image_paths:
+        _frame = cv2.imread(image_path)
+        if _frame is None:
+            raise FileNotFoundError(f"Image {image_path} not found.")
+        # # ret_val, _frame = video.read()
+        # if not ret_val:
+        #     break
+        frame =  process_image(_frame, device, seg_model)
+
+        
+        cv2.imshow("Walkable Area Mask", frame)
+        # cv2.imshow("Blended Image", img_display)
+        cv2.waitKey(0)
+        # if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
+        #     break
+
+        # Wait for a key press to close the displayed windows
+        cv2.destroyAllWindows()
 
 
-def main():
-    args = parse_args()
-    update_config(cfg, args)
-    print(cfg)
+def test_on_recording(device,seg_model):
+    video = cv2.VideoCapture('./assets/indoors.MOV')
 
-    logger = create_logger(cfg)
-
-
-    voice_engine = pyttsx3.init()
-
-    video = cv2.VideoCapture(0)
-
-    # Segmentation model
-    if cfg.SEGMENTATION.EXECUTE:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        seg_model = segmentation.build_seg_model(cfg.SEGMENTATION.MODEL)()
-        logger.info(f"Seg model: {cfg.SEGMENTATION.MODEL}, Device: {device}")
-
-        classification_model = traffic_light_classification.build_classification_model(
-            cfg.TRAFFIC_LIGHT_CLASSIFICATION.MODEL
-        )()
-
-
-    num_frame = 0
-    traffic_light_info = ""
-    traffic_light_preds = []
+    output_path = './assets/output.mp4'
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec used to encode the video
+    fps = int(video.get(cv2.CAP_PROP_FPS))  # Capture the frames per second of the input video
+    frame_size = (int(video.get(cv2.CAP_PROP_FRAME_WIDTH)), int(video.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    out = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
 
     while True:
-        ret_val, _frame = video.read()  # for webcam
+        ret_val, _frame = video.read()
         if not ret_val:
             break
+        # cv2.imshow("Original Video Frame", _frame)
 
-        _frame = cv2.cvtColor(_frame, cv2.COLOR_BGR2RGB)
-        _frame = cv2.resize(_frame, tuple(cfg.IMAGE.SIZE))
-        img_display = _frame
+        # Uncomment and implement process_image function as needed
+        frame = process_image(_frame, device, seg_model)
 
-        if cfg.SEGMENTATION.EXECUTE:
-            img = Image.fromarray(_frame)
-            seg_prediction = segmentation.predict_one(seg_model, img, device, cfg)
+        out.write(frame)
+        # cv2.imshow("Processed Frame", frame)
 
-            if not cfg.SEGMENTATION.RETURN_PROB:
-                model_name = cfg.SEGMENTATION.MODEL
-                convert = "segformer" not in model_name
-                colorized = colorize.colorize(
-                    seg_prediction, palette=cfg.SEGMENTATION.PALETTE, convert=convert
-                )  # for display
-                colorized_seg_pred = np.asarray(
-                    colorized.copy()
-                )  # for further drone control and traffic light recognition
 
-                # Drone control adjustment based on (colorized) label image prediction
-                walkable_area_mask = extract_walkable_area(colorized_seg_pred, cfg)
-                print(walkable_area_mask)
+        # # Display the frame (optional, can be removed for faster processing)
+        # cv2.imshow("Processed Frame", frame)
 
-                # anno_frame, left_right_velocity = drone.get_translation_velocity(_frame, walkable_area_mask, cfg)
-                # velocities.update({"left_right_velocity": left_right_velocity})
-                # yaw_velocity = drone.get_yaw_velocity(walkable_area_mask, cfg)
-                # velocities.update({"yaw_velocity": yaw_velocity})
+        # if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
+        #     break
 
-                # Handle traffic lights
-                traffic_light_mask = extract_traffic_light(colorized_seg_pred, cfg)
-                anno_frame, cropped_traffic_lights = crop_traffic_lights(
-                    anno_frame, traffic_light_mask, cfg, crop=True
-                )
-                if cropped_traffic_lights:
-                    predictions = traffic_light_classification.predict(
-                        classification_model, cropped_traffic_lights, device, cfg
-                    )
-                    final_pred = traffic_light_classification.get_final_prediction(predictions)
+        # This line is only needed if you're displaying another window
+        # cv2.imshow("Blended Image", img_display)
 
-                    traffic_light_preds.append(final_pred)
+        # if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
+        #     break
+    video.release()
+    out.release()  # Don't forget to release the VideoWriter
+    cv2.destroyAllWindows()
 
-                    # Choose traffic light which occurs the most in {cfg.TRAFFIC_LIGHT_CLASSIFICATION.NUM_AVERAGE} as final overall prediction
-                    if len(traffic_light_preds) >= cfg.TRAFFIC_LIGHT_CLASSIFICATION.NUM_AVERAGE:
-                        final_pred_overall = traffic_light_classification.get_average_prediction(
-                            traffic_light_preds
-                        )
-                        logger.info(f"Traffic light: {final_pred_overall}")
 
-                        forward_backward_velocity = cfg.DRONE.SPEED
-                        if final_pred_overall == "pedestrian-red":
-                            traffic_light_info = "Red"
-                            print(traffic_light_info)
-                            sound_alarm(voice_engine, "Red! Stop!")
-                            forward_backward_velocity = 0
-                        elif final_pred_overall == "pedestrian-green":
-                            traffic_light_info = "Green"
-                            print(traffic_light_info)
-                            sound_alarm(voice_engine, "Green")
-                            forward_backward_velocity = cfg.DRONE.SPEED + cfg.DRONE.ACCELEARATION
-                        else:
-                            traffic_light_info = ""
+def test_on_video(device,seg_model):
+    video = cv2.VideoCapture(0)
 
-                        # velocities.update({"forward_backward_velocity": forward_backward_velocity})
+    num_frame = 0
+    start_time = time.time()  # Start time for FPS calculation
+    while True:
+            ret_val, _frame = video.read()
+            if not ret_val:
+                break
 
-                    # if tello.is_flying:
-                    #     # Adjust up-down velocity to maintain drone at target height
-                    #     current_height = tello.get_height()
-                    #     logger.info(f"Current height: {current_height}")
-                    #     up_down_velocity = drone.get_maintain_flight_height_velocity(current_height, cfg)
-                    #     velocities.update({"up_down_velocity": up_down_velocity})
+            current_time = time.time()
+            fps = num_frame / (current_time - start_time)
 
-                    #     vel_values = list(velocities.values())
-                    #     vel_info = (
-                    #         f"LR: {vel_values[0]}| FB: {vel_values[1]}| UD: {vel_values[2]}| Yaw: {vel_values[3]}"
-                    #     )
-                    #     logger.info(f"Vel: {vel_info}")
 
-                    #     tello.send_rc_control(*velocities.values())
+            frame =  process_image(_frame, device, seg_model)
 
-                    #     if drone.is_at_target_height(current_height, cfg):
-                    #         logger.info("At target height")
+            # cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.imshow("Walkable Area Mask", frame)
+            # cv2.imshow("Blended Image", img_display)
+            if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
+                break
 
-                    # Display
-                if cfg.SEGMENTATION.BLEND:
-                    blended = colorize.blend(img, colorized, cfg.SEGMENTATION.ALPHA)
-
-                img_display = display(_frame, colorized, blended, anno_frame, cfg.DRONE.DISPLAY_IMAGE)
-                img_display = np.asarray(img_display)
-
-                if cfg.DRONE.DISPLAY_INFO:
-                    display_info(img_display)
-
-                img_display = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
-
-            cv2.imshow("Tello", img_display)
-
+            # Wait for a key press to close the displayed windows
+            cv2.destroyAllWindows()
 
             num_frame += 1
+    video.release()
+    cv2.destroyAllWindows()
 
-        export_data(drone.centroid_measurements, drone.centroid_estimates)
+def main():
 
-        # video.release() # for webcam
 
-        cv2.destroyAllWindows()
-        logger.info("=> End")
+    device = torch.device("cpu")
+    seg_model = segmentation.build_seg_model("mobilenet_v3_small")()
+
+    # test_on_image(device,seg_model)
+    test_on_video(device,seg_model)
+    # test_on_recording(device,seg_model)
 
 
 if __name__ == "__main__":

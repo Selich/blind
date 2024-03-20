@@ -8,8 +8,6 @@ import csv
 from yacs.config import CfgNode as CN
 import cv2
 import numpy as np
-from djitellopy import Tello
-import pyttsx3
 
 WHITE_COLOR = np.array([255, 255, 255], dtype=np.uint8)
 BLACK_COLOR = np.array([0, 0, 0], dtype=np.uint8)
@@ -98,6 +96,7 @@ def mask_target_obj(label_img: np.ndarray, objs: List[str], cfg: CN) -> np.ndarr
 
     # Find and filter objs based on their corresponding color
     obj_color_dict = obj_to_color(cfg)
+    print(obj_color_dict)
     for obj in objs:
         obj_color = obj_color_dict[obj]
         conditions |= np.all(label_img == obj_color, axis=-1)  # False | True = True, False | False = False
@@ -149,7 +148,7 @@ def extract_walkable_area(label_img: np.ndarray, cfg: CN) -> np.ndarray:
     np.ndarray
         Grayscale mask, in which color of walkable area pixels is white, while color of other pixels is black
     """
-    return mask_target_obj(label_img, ["crosswalk plain", "crosswalk zebra", "sidewalk"], cfg)
+    return mask_target_obj(label_img, ["crosswalk plain", "crosswalk zebra", "sidewalk", "road"], cfg)
 
 
 def extract_road(label_img: np.ndarray, cfg: CN) -> np.ndarray:
@@ -190,7 +189,6 @@ def split_img(mask_img: np.ndarray, cfg: CN, show_text: bool = False) -> Tuple[L
         - List of partitions' confidence scores 
         - Mask image
     """
-    num_split = cfg.DRONE.NUM_SPLIT
     img_partitions = np.array_split(mask_img, num_split, axis=1)
     scores = [img_partition.mean() for img_partition in img_partitions]
     mask_img_copy = mask_img.copy()
@@ -263,10 +261,6 @@ def get_contour_centroid(contour: np.ndarray) -> Tuple[int, int]:
 
 def estimate_centroid(cur_measurement, last_measurement, last_estimate, cfg):
     cur_estimate = np.zeros(last_estimate)
-    if cfg.DRONE.HIGH_PASS:
-        cur_estimate = cfg.DRONE.HIGH_PASS_ALPHA * (last_estimate + cur_measurement - last_measurement)
-    if cfg.DRONE.LOW_PASS:
-        cur_estimate = last_estimate + cfg.DRONE.LOW_PASS_ALPHA * (cur_measurement - last_estimate)
     return cur_estimate
 
 
@@ -362,7 +356,7 @@ def annotate_circle(img: np.ndarray, x_circle: int, y_circle: int, cfg: CN) -> n
 
 
 def display(
-    ori_img: np.ndarray, colorized: Image, blend: Image, anno_img: np.ndarray, display="annotation"
+    ori_img: np.ndarray, colorized: Image, blend: Image,  display="annotation"
 ) -> np.ndarray:
     """
     Choose image to display
@@ -389,17 +383,19 @@ def display(
     assert display in ["original", "colorize", "blend", "annotation"]
 
     img_display = ori_img
-    if display == "colorize":
-        img_display = np.asarray(colorized)
-    elif display == "blend":
-        img_display = np.asarray(blend)
-    elif display == "annotation":
-        img_display = anno_img
+    img_display = np.asarray(colorized)
+    img_display = np.asarray(blend)
+    # img_display = anno_img
+    # elif display == "annotation":
     return img_display
+
+    
+    # 1.5 / 4
+    
 
 
 def display_info(
-    img_display: np.ndarray, drone: Tello, velocities: List[int], height: int, traffic_light_info: str, cfg: CN
+    img_display: np.ndarray, drone , velocities: List[int], height: int, traffic_light_info: str, cfg: CN
 ):
     """
     Display information on the image
@@ -422,10 +418,6 @@ def display_info(
     font_color = cfg.IMAGE.FONT.COLOR
 
     # Battery
-    battery_info = f"Battery: {drone.get_battery()}"
-    cv2.putText(
-        img_display, battery_info, (5, 30), cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_color, font_thickness,
-    )
 
     # Height
     height_info = f"Height: {height}"
@@ -468,7 +460,7 @@ def display_info(
         )
 
 
-def sound_alarm(voice_engine: pyttsx3.Engine, content: str):
+def sound_alarm(voice_engine, content: str):
     """
     Speak the specified content
 
@@ -479,8 +471,7 @@ def sound_alarm(voice_engine: pyttsx3.Engine, content: str):
     content : str
         content to speak
     """
-    voice_engine.say(content)
-    voice_engine.runAndWait()
+    pass
 
 
 def export_data(centroid_measurements, centroid_estimates):

@@ -102,10 +102,4 @@ def predict_one(
         - If `cfg.SEGMENTATION.RETURN_PROB == False`, a Numpy array of shape (1, height, width) containing predicted classes 
         - If `cfg.SEGMENTATION.RETURN_PROB == True`, a Numpy array of shape (1, height, width) containing predicted log-probabilities of each class
     """
-    if seg_model.cfg:
-        image = np.asarray(image)
-        output = np.array(inference_segmentor(seg_model, image)).astype(np.uint8).squeeze()
-        output = Image.fromarray(output)
-        return output
-    else:
-        return predict(seg_model, [image], device, cfg)[0]
+    return predict(seg_model, [image], device, cfg)[0]
